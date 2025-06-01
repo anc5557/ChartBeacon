@@ -1,0 +1,93 @@
+---
+description: 오실레이터 지표, 이동평균 지표 계산 rule
+globs: 
+alwaysApply: false
+---
+# Investing.com 스타일 기술적 지표 계산 & Signal Rule
+
+> 개인용 **Tech‑Indicators Dashboard**에서 Investing.com 기술적 분석 요약을 재현하기 위해 작성한 지표 계산·판정 기준 문서입니다.
+
+---
+
+## 목차
+
+1. [오실레이터 지표](mdc:#오실레이터-지표)
+2. [이동평균](mdc:#이동평균)
+3. [요약(Technical Summary) 산출 로직](mdc:#요약-technical-summary-산출-로직)
+4. [타임프레임 주의 사항](mdc:#타임프레임-주의-사항)
+5. [구현 Tips](mdc:#구현-tips)
+
+---
+
+## 오실레이터 지표
+
+| 지표                       | 핵심 수식                                                      | BUY / SELL 판정 기준                                                                            |
+| ------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **RSI (14)**             | `RSI = 100 − 100 / (1 + RS)`<br>*RS = Avg Gain ÷ Avg Loss* | RSI > 70 → **SELL**<br>RSI < 30 → **BUY**                                                   |
+| **Stochastic %K (9, 6)** | `%K = (C − L9) / (H9 − L9) × 100`<br>`%D = SMA(%K, 6)`     | %K > 80 → **SELL**<br>%K < 20 → **BUY**                                                     |
+| **Stochastic RSI (14)**  | `(RSI − min₁₄) / (max₁₄ − min₁₄)`                          | > 0.8 → **SELL**<br>< 0.2 → **BUY**                                                         |
+| **MACD (12, 26, 9)**     | `MACD = EMA12 − EMA26`<br>`Signal = EMA9(MACD)`            | MACD > Signal → **BUY**<br>MACD < Signal → **SELL**                                         |
+| **ADX (14)**             | `ADX = SMA(abs(+DI − −DI) / (+DI + −DI) × 100, 14)`        | +DI > −DI & ADX ≥ 20 → **BUY**<br>−DI > +DI & ADX ≥ 20 → **SELL**<br>ADX < 20 → **NEUTRAL** |
+| **Williams %R (14)**     | `%R = (H₁₄ − C) / (H₁₄ − L₁₄) × −100`                      | %R > −20 → **SELL**<br>%R < −80 → **BUY**                                                   |
+| **CCI (14)**             | `(TP − SMA(TP)) / (0.015 × MD)`                            | CCI > 100 → **BUY**<br>CCI < −100 → **SELL**                                                |
+| **ATR (14)**             | `ATR = SMA(True Range, 14)`                                | *변동성 전용 — 신호 X*                                                                             |
+| **Highs/Lows (14)**      | `HH₁₄ − LL₁₄`                                              | > 0 → **BUY**<br>< 0 → **SELL**                                                             |
+| **Ultimate Osc.**        | 가중 7·14·28기간 Osc.                                          | > 70 → **BUY**<br>< 30 → **SELL**                                                           |
+| **ROC (12)**             | `(C − C₁₂) / C₁₂ × 100`                                    | ROC > 0 → **BUY**<br>ROC < 0 → **SELL**                                                     |
+| **Bull/Bear Power (13)** | `Bull = High − EMA13`, `Bear = Low − EMA13`                | Bull > 0 → **BUY**<br>Bear < 0 → **SELL**                                                   |
+
+> **참고**  Investing.com은 노이즈 완화를 위해 ±5 % 버퍼를 둘 수 있습니다. 필요 시 프로젝트 설정에서 조정하세요.
+
+---
+
+## 이동평균
+
+| 구분          | 계산식                                      | 판정 기준                                     |
+| ----------- | ---------------------------------------- | ----------------------------------------- |
+| **SMA (n)** | `SMA = ΣC / n`                           | 종가 > SMA → **BUY**<br>종가 < SMA → **SELL** |
+| **EMA (n)** | `EMAₜ = (C − EMAₜ₋₁) × 2/(n+1) + EMAₜ₋₁` | 동일                                        |
+
+> 사용 기간: **5, 10, 20, 50, 100, 200** (SMA + EMA = 12개). `moving_avgs` 테이블과 매칭됩니다.
+
+---
+
+## 요약(Technical Summary) 산출 로직
+
+```text
+1. 오실레이터 11종(BUY/SELL/NEUTRAL) 카운트
+2. buy_cnt ≥ ⅔ total   → STRONG_BUY
+   buy_cnt > sell_cnt   → BUY
+   sell_cnt ≥ ⅔ total  → STRONG_SELL
+   sell_cnt > buy_cnt   → SELL
+   else                 → NEUTRAL
+3. 이동평균 12개도 동일 규칙 적용 → "MA Summary"
+4. 최종 Technical Summary = Oscillator Summary × ½ + MA Summary × ½
+```
+
+---
+
+## 타임프레임 주의 사항
+
+* **5 분 / 1 시간 / 1 일** 각각 별도 계산·판정.
+* 같은 지표라도 시계열이 다르므로 API 호출 시 `timeframe` 파라미터는 필수입니다.
+
+---
+
+## 구현 Tips
+
+1. **pandas‑ta 대응표**
+
+   | 지표   | 함수                | 주요 파라미터                          |
+   | ---- | ----------------- | -------------------------------- |
+   | RSI  | `df.ta.rsi()`     | `length=14`                      |
+   | MACD | `df.ta.macd()`    | `fast=12`, `slow=26`, `signal=9` |
+   | ADX  | `df.ta.adx()`     | `length=14`                      |
+   | 기타   | pandas‑ta docs 참조 | —                                |
+
+2. 신호 판정 로직은 `rules.py`에 함수화하여 단위 테스트 가능하게 유지합니다.
+
+3. **ATR**처럼 방향성이 없는 지표는 요약 계산에서 제외해도 Investing.com 결과와 큰 차이가 없습니다.
+
+---
+
+

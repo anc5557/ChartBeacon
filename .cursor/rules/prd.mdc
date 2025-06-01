@@ -1,0 +1,197 @@
+---
+description: PRD
+globs: 
+alwaysApply: false
+---
+# 기술적 지표 대시보드 PRD (Personal Edition)
+
+---
+
+## 1. 개요 (Overview)
+
+* **목적**: 단일 사용자가 투자 의사결정을 돕기 위해 *Investing.com* 스타일의 기술적 지표 요약(“적극 매수” 등)을 실시간으로 확인하고, 중요 변화가 발생하면 Discord로 알림을 받을 수 있는 경량 서비스 구축.
+* **대상 사용자**: 서비스 운영자 본인 1명.
+* **범위**: 주식·ETF 티커 다수 지원, 분·시간·일봉 3개 타임프레임 우선 구현.
+
+## 2. 목표 (Goals)
+
+| #  | 목표        | 성공 기준 (Metric)                                     |
+| -- | --------- | -------------------------------------------------- |
+| G1 | 실시간 지표 계산 | 5 분 분봉 기준 지표 업데이트 지연 ≤ 2 분                         |
+| G2 | 요약 정확도    | 내부 테스트 시 Investing.com 동일 시점 대비 ±1 레벨 이하 차이 95% 이상 |
+| G3 | 알림 신속성    | 요약 레벨 변화 → Discord 메시지 송신까지 30 초 이내                |
+| G4 | 간편 배포     | `docker-compose up -d` 한 줄로 초기 세팅 완료               |
+
+## 3. 사용 시나리오 (User Flow)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    User->>API: /summary/005930.KS 요청
+    API->>PostgreSQL: summary 최신 레코드 조회
+    PostgreSQL-->>API: JSON 데이터 반환
+    API-->>User: { level:"STRONG_BUY", buy:9, ... }
+```
+
+* **이벤트 알림**: 요약 레벨이 이전 값과 달라질 때 Airflow Task가 Discord Webhook 호출 → 실시간 DM.
+
+## 4. 핵심 기능 (Functional Requirements)
+
+| ID | 기능                  | 설명                                                              |
+| -- | ------------------- | --------------------------------------------------------------- |
+| F1 | **데이터 수집**          | Yahoo Finance API$yfinance$를 통해 OHLCV 수집 후 `candles_raw` UPSERT |
+| F2 | **지표 계산**           | pandas‑ta로 RSI·MACD 등 12종 지표 계산 → `indicators` 저장               |
+| F3 | **요약 생성**           | BUY/SELL 규칙 적용, 레벨 결정 → `summary` UPSERT                        |
+| F4 | **REST API**        | `/summary/{ticker}`, `/candles/{ticker}/{tf}` 최소 2개 엔드포인트       |
+| F5 | **Discord Webhook** | 레벨 변화 시 메시지 전송 (임베드 카드 포함)                                      |
+| F6 | **모니터링 UI**         | Airflow WebUI 외 별도 대시보드 필요 없음                                   |
+
+## 5. 비기능 요구사항 (Non‑Functional)
+
+* **성능**: 단일 사용자 기준 API 응답 < 300 ms @ localhost.
+* **신뢰성**: Docker 재시작 시 자동 복구 (restart: always).
+* **보안**: 로컬 네트워크 한정 사용, HTTPS 필요 없음.
+* **로깅**: 표준 출력 + Airflow 로그 → `docker logs` 로 확인.
+
+## 6. 시스템 아키텍처
+
+```mermaid
+graph LR
+    subgraph Docker Network
+        A[Airflow (Scheduler+Webserver)] --SQL--> P[(PostgreSQL)]
+        A --Discord Webhook--> D(Discord)
+        A --gRPC / REST--> F[FastAPI]
+        F --SQL--> P
+    end
+```
+
+## 7. 기술 스택
+
+| 레이어  | 선택 기술                           | 비고                                  |
+| ---- | ------------------------------- | ----------------------------------- |
+| 언어   | **Python 3.12**                 | pyenv·Poetry                        |
+| DB   | **PostgreSQL 16**               | Timescale 파티셔닝 고려 X                 |
+| 스케줄러 | **Airflow 2.9 (LocalExecutor)** | DAG 3개 (5 m, 1 h, 1 d)              |
+| API  | **FastAPI + Uvicorn**           | asyncpg Pool                        |
+| 알림   | **Discord Webhook**             | `discord.py` 없고 단순 POST             |
+| 컨테이너 | **Docker Compose**              | 3 services (postgres, airflow, api) |
+
+## 8. 데이터베이스 설계 요약
+
+```mermaid
+erDiagram
+    symbols ||--o{ candles_raw
+    symbols ||--o{ indicators
+    symbols ||--o{ summary
+
+    symbols {
+        bigint id PK
+        text ticker
+        text name
+    }
+
+    candles_raw {
+        bigint id PK
+        bigint symbol_id FK
+        text timeframe
+        timestamptz ts
+        numeric open high low close volume
+    }
+
+    indicators {
+        bigint id PK
+        bigint symbol_id FK
+        text timeframe
+        timestamptz ts
+        numeric rsi14 macd adx14 ...
+    }
+
+    summary {
+        bigint id PK
+        bigint symbol_id FK
+        text timeframe
+        timestamptz ts
+        smallint buy sell neutral
+        text level
+    }
+```
+
+## 9. 스케줄러(DAG) 정의
+
+| DAG ID          | 주기                 | 태스크 흐름                           |
+| --------------- | ------------------ | -------------------------------- |
+| `indicators_5m` | `*/5 * * * *`      | fetch\_5m → calc\_5m → score\_5m |
+| `indicators_1h` | `@hourly`          | fetch\_1h → calc\_1h → score\_1h |
+| `indicators_1d` | `@daily` 07:15 KST | fetch\_1d → calc\_1d → score\_1d |
+
+## 10. REST API 사양
+
+| 메서드 | 경로                       | 파라미터            | 응답 요약                       |
+| --- | ------------------------ | --------------- | --------------------------- |
+| GET | `/summary/{ticker}`      | ticker: str     | {level,buy,sell,neutral,ts} |
+| GET | `/candles/{ticker}/{tf}` | limit: int=1000 | OHLCV 배열                    |
+
+## 11. Discord Webhook 알림
+
+* **Trigger**: `summary.level` 값이 이전 실행 대비 변경.<br>
+* **Payload 예시**:
+
+```json
+{
+  "username": "Tech Alert",
+  "embeds": [{
+    "title": "[005930.KS] STRONG_BUY → SELL",
+    "color": 15158332,
+    "fields": [
+      {"name": "Buy/Sell/Neutral", "value": "2 / 6 / 1"},
+      {"name": "Timeframe", "value": "5m", "inline": true},
+      {"name": "Observed", "value": "2025‑05‑29 18:05:00 KST", "inline": true}
+    ]
+  }]
+}
+```
+
+* **컬러 코드**: STRONG\_BUY(3066993) / BUY(3447003) / NEUTRAL(9807270) / SELL(15158332) / STRONG\_SELL(10038562)
+
+## 12. 테스트 전략
+
+* 단위 테스트: 지표 계산 함수 90% 커버리지 목표.
+* 통합 테스트: Docker Compose Up 후 `/summary/{ticker}` 3종 호출 → HTTP 200 & 필드 확인.
+
+## 13. 배포 및 운영
+
+* 최초 배포: `git clone` → `.env` 작성 → `docker-compose up -d`.
+* 백업: `pg_dump -Fc` 주 1회 cron, 로컬 NAS 저장.
+
+## 14. 일정 (Milestones)
+
+| 단계 | 기간    | 산출물                        |
+| -- | ----- | -------------------------- |
+| M1 | Day 1 | Docker Compose · DB 스키마 완료 |
+| M2 | Day 2 | Fetcher + Indicator 코드 완성  |
+| M3 | Day 3 | Summary 로직 & Discord 알림 통합 |
+| M4 | Day 4 | FastAPI 엔드포인트 & README 작성  |
+| M5 | Day 5 | 테스트 · 최종 배포                |
+
+## 15. 리스크 & 완화
+
+1. **API Rate Limit** → 종목 수 제한 & 지연 재시도.
+2. **증권 API 중단** → CSV 백업 소스 준비.
+
+## 16. 용어
+
+| 용어    | 설명                                                |
+| ----- | ------------------------------------------------- |
+| TF    | Timeframe (5m, 1h, 1d)                            |
+| Level | STRONG\_BUY / BUY / NEUTRAL / SELL / STRONG\_SELL |
+
+## 17. 참고자료
+
+* Investing.com Technical Summary 규칙(공식 FAQ)
+* pandas‑ta 문서 [https://pandas-ta.readthedocs.io](mdc:https:/pandas-ta.readthedocs.io)
+* Discord Webhook 공식 문서 [https://discord.com/developers/docs/resources/webhook](mdc:https:/discord.com/developers/docs/resources/webhook)
+
+---
+
+*작성: 2025‑05‑29, 서준호 개인 프로젝트용*
+

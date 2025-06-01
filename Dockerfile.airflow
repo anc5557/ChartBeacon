@@ -1,0 +1,36 @@
+FROM apache/airflow:2.9.1-python3.12
+
+USER root
+
+# 시스템 패키지 설치
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+# Python 의존성 복사 및 설치
+COPY pyproject.toml /opt/airflow/
+COPY uv.lock /opt/airflow/
+
+# uv를 사용하여 의존성 설치
+RUN pip install uv
+RUN cd /opt/airflow && uv pip install --system -e ".[airflow]"
+
+# 추가 패키지 설치
+RUN pip install \
+    yfinance \
+    pandas-ta \
+    requests \
+    psycopg2-binary
+
+# airflow 소스 코드 복사
+COPY airflow /opt/airflow/
+COPY api /opt/airflow/api
+
+# 권한 설정
+USER root
+RUN chown -R airflow:root /opt/airflow
+USER airflow 
