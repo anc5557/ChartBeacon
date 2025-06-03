@@ -15,7 +15,6 @@ sys.path.append("/opt/airflow/plugins")
 from fetcher import fetch_ticker_data
 from calculator import calculate_indicators
 from scorer import score_indicators
-from notifier import check_and_notify_discord
 from utils import get_active_symbols
 
 # Default arguments
@@ -89,13 +88,14 @@ for ticker in TICKERS:
         dag=dag,
     )
 
-    # Notify task
-    notify_task = PythonOperator(
-        task_id=f"notify_{ticker_clean}",
-        python_callable=check_and_notify_discord,
-        op_kwargs={"ticker": ticker, "timeframe": TIMEFRAME},
-        dag=dag,
-    )
+    # Notify task (주석 처리)
+    # notify_task = PythonOperator(
+    #     task_id=f"notify_{ticker_clean}",
+    #     python_callable=check_and_notify_discord,
+    #     op_kwargs={"ticker": ticker, "timeframe": TIMEFRAME},
+    #     dag=dag,
+    # )
 
     # Set dependencies
-    start >> fetch_task >> calc_task >> score_task >> notify_task >> end
+    # start >> fetch_task >> calc_task >> score_task >> notify_task >> end
+    start >> fetch_task >> calc_task >> score_task >> end
