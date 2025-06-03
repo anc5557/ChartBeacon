@@ -131,6 +131,24 @@ class DataFillResponse(BaseModel):
     message: str
 
 
+class DataSufficiencyResponse(BaseModel):
+    sufficient: bool
+    message: Optional[str] = None
+    last_entry_date: Optional[datetime] = None
+    expected_entry_date: Optional[datetime] = None
+    details: Optional[str] = None
+    candle_count: Optional[int] = None
+
+
+class DataReplenishResponse(BaseModel):
+    """데이터 보충 시작 응답 (단일 티커)"""
+
+    ticker: str
+    timeframe: str
+    status: str
+    message: str
+
+
 class DataStatusTimeframe(BaseModel):
     """타임프레임별 데이터 상태"""
 

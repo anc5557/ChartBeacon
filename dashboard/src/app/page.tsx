@@ -18,7 +18,13 @@ import { SummaryCard } from "@/components/summary-card";
 import { AddSymbolDialog } from "@/components/add-symbol-dialog";
 import { PromptCopyButton } from "@/components/prompt-copy-button";
 import { BacktestPanel } from "@/components/backtest-panel";
-import { TrendingUp, TrendingDown, Minus, Plus } from "lucide-react";
+import {
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Plus,
+  AlertCircle,
+} from "lucide-react";
 
 interface Symbol {
   id: number;
@@ -44,6 +50,15 @@ interface IndicatorData {
   signal: string;
 }
 
+// Add new interface for data sufficiency API response
+interface DataSufficiency {
+  sufficient: boolean;
+  message?: string;
+  last_entry_date?: string;
+  expected_entry_date?: string;
+  details?: string; // 백엔드에서 추가적인 상세 메시지를 줄 경우
+}
+
 const timeframes = ["5m", "1h", "1d", "5d", "1mo", "3mo"];
 
 export default function Dashboard() {
@@ -56,6 +71,12 @@ export default function Dashboard() {
   const [currentIndicators, setCurrentIndicators] = useState<IndicatorData[]>(
     []
   );
+  const [isDataSufficient, setIsDataSufficient] = useState<boolean | null>(
+    null
+  );
+  const [dataSufficiencyInfo, setDataSufficiencyInfo] =
+    useState<DataSufficiency | null>(null);
+  const [isReplenishing, setIsReplenishing] = useState<boolean>(false);
 
   // API Base URL
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -198,6 +219,78 @@ export default function Dashboard() {
     [API_BASE]
   );
 
+  // 데이터 충분성 확인
+  const checkDataSufficiency = useCallback(
+    async (ticker: string, timeframe: string) => {
+      if (!ticker || !timeframe) return;
+      try {
+        const response = await fetch(
+          `${API_BASE}/data-sufficiency/${ticker}?timeframe=${timeframe}`
+        );
+        if (response.ok) {
+          const data: DataSufficiency = await response.json();
+          setDataSufficiencyInfo(data);
+          setIsDataSufficient(data.sufficient);
+        } else {
+          // API 에러 시 기본적으로 데이터가 충분하지 않다고 간주하거나, 에러 상태를 별도로 관리할 수 있습니다.
+          console.error("Failed to check data sufficiency:", response.status);
+          setDataSufficiencyInfo({
+            sufficient: false,
+            message: "데이터 충분성 확인 실패",
+          });
+          setIsDataSufficient(false);
+        }
+      } catch (error) {
+        console.error("Error checking data sufficiency:", error);
+        setDataSufficiencyInfo({
+          sufficient: false,
+          message: "데이터 충분성 확인 중 오류 발생",
+        });
+        setIsDataSufficient(false);
+      }
+    },
+    [API_BASE]
+  );
+
+  // 데이터 보충 요청
+  const handleReplenishData = async () => {
+    if (!selectedSymbol || !selectedTimeframe) return;
+
+    setIsReplenishing(true);
+    try {
+      const response = await fetch(
+        `${API_BASE}/data-replenish/${selectedSymbol}?timeframe=${selectedTimeframe}`,
+        {
+          method: "POST",
+        }
+      );
+
+      if (response.ok) {
+        // 데이터 보충 성공 시, 잠시 후 데이터 상태를 다시 확인하고 관련 정보를 업데이트합니다.
+        // 실제 환경에서는 백엔드 작업 시간에 따라 지연 시간이 필요할 수 있습니다.
+        // 여기서는 즉시 재확인 및 업데이트를 시도합니다.
+        alert(
+          "데이터 보충 요청이 성공적으로 전송되었습니다. 데이터가 업데이트되는 데 시간이 걸릴 수 있습니다."
+        );
+        await checkDataSufficiency(selectedSymbol, selectedTimeframe);
+        await fetchSummary(selectedSymbol, selectedTimeframe); // 요약 정보도 업데이트
+        await fetchIndicators(selectedSymbol, selectedTimeframe); // 지표 정보도 업데이트
+      } else {
+        const errorData = await response.json().catch(() => null); // 에러 응답이 JSON이 아닐 수도 있음
+        alert(
+          `데이터 보충 요청 실패: ${response.status} - ${
+            errorData?.detail || "알 수 없는 오류"
+          }`
+        );
+        console.error("Failed to replenish data:", response.status, errorData);
+      }
+    } catch (error) {
+      alert(`데이터 보충 중 오류 발생: ${error}`);
+      console.error("Error replenishing data:", error);
+    }
+    setIsReplenishing(false);
+  };
+
   // 초기 데이터 로드
   useEffect(() => {
     const loadData = async () => {
@@ -217,12 +310,18 @@ export default function Dashboard() {
     }
   }, [selectedSymbol, fetchSummary]);
 
-  // 선택된 타임프레임의 지표 조회
+  // 선택된 타임프레임의 지표 및 데이터 충분성 조회
   useEffect(() => {
     if (selectedSymbol && selectedTimeframe) {
       fetchIndicators(selectedSymbol, selectedTimeframe);
+      checkDataSufficiency(selectedSymbol, selectedTimeframe); // 데이터 충분성 확인 추가
     }
-  }, [selectedSymbol, selectedTimeframe, fetchIndicators]);
+  }, [
+    selectedSymbol,
+    selectedTimeframe,
+    fetchIndicators,
+    checkDataSufficiency,
+  ]);
 
   // 키보드 내비게이션 (위/아래로 종목 변경, 좌/우로 타임프레임 변경)
   useEffect(() => {
@@ -386,6 +485,47 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
+
+        {/* 데이터 부족 경고 및 보충 버튼 */}
+        {isDataSufficient === false && dataSufficiencyInfo && (
+          <Card className="border-destructive bg-destructive/10">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-destructive">
+                <AlertCircle className="inline-block mr-2 h-5 w-5" />
+                주의! 데이터 부족
+              </CardTitle>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleReplenishData}
+                disabled={isReplenishing}
+              >
+                {isReplenishing ? "보충 중..." : "데이터 보충"}
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-destructive">
+                {dataSufficiencyInfo.message ||
+                  "선택된 종목 및 타임프레임에 대한 데이터가 충분하지 않습니다."}
+              </p>
+              {dataSufficiencyInfo.details && (
+                <p className="text-xs text-destructive mt-1">
+                  {dataSufficiencyInfo.details}
+                </p>
+              )}
+              {dataSufficiencyInfo.last_entry_date && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  마지막 데이터 시간: {dataSufficiencyInfo.last_entry_date}
+                </p>
+              )}
+              {dataSufficiencyInfo.expected_entry_date && (
+                <p className="text-xs text-muted-foreground">
+                  예상 데이터 시간: {dataSufficiencyInfo.expected_entry_date}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {selectedSymbol && (
           <>

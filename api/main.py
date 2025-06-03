@@ -1,8 +1,8 @@
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
-from datetime import datetime
+from typing import List, Optional
+from datetime import datetime, timezone, timedelta
 import logging
 
 from . import crud
@@ -330,6 +330,138 @@ async def fill_ticker_data(
         "status": "started",
         "message": f"Data filling for {ticker} has been started in background",
     }
+
+
+@app.post("/data-replenish/{ticker}", response_model=schemas.DataReplenishResponse)
+async def replenish_single_ticker_data(
+    ticker: str,
+    timeframe: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    특정 종목의 특정 타임프레임 데이터 보충 (재실행)
+    프론트엔드에서 데이터 부족 시 호출.
+    """
+    # 티커 검증
+    symbol = await crud.get_symbol_by_ticker(db, ticker)
+    if not symbol:
+        raise HTTPException(status_code=404, detail=f"Symbol {ticker} not found")
+
+    background_tasks.add_task(fill_historical_data, ticker=ticker, timeframes=[timeframe])
+
+    logger.info(f"Data replenishment started for {ticker}, timeframe: {timeframe}")
+
+    return {
+        "ticker": ticker,
+        "timeframe": timeframe,
+        "status": "replenishment_started",
+        "message": f"Data replenishment for {ticker} ({timeframe}) has been started in the background.",
+    }
+
+
+MIN_CANDLE_COUNT_FOR_SUFFICIENCY = 200  # 기본값, 단기용
+MAX_DAYS_DIFFERENCE_FOR_LATEST_CANDLE = 7  # 기본값, 단기용
+
+# 타임프레임별 최소 필요 캔들 수 정의
+TIMEFRAME_MIN_CANDLES = {
+    "5m": 200,
+    "1h": 200,
+    "1d": 200,
+    "5d": 52,  # 약 1년치 주봉
+    "1mo": 24,  # 약 2년치 월봉
+    "3mo": 8,  # 약 2년치 분기봉
+}
+
+# 타임프레임별 최근 데이터 최대 허용 일수 차이 정의
+TIMEFRAME_MAX_DAYS_DIFFERENCE = {
+    "5m": 5,  # 최근 5일 이내 (거래일 기준)
+    "1h": 5,  # 최근 5일 이내
+    "1d": 7,  # 최근 7일 이내
+    "5d": 10,  # 최근 10일 이내 (다음 주 초)
+    "1mo": 40,  # 최근 40일 이내 (다음 달 초중순)
+    "3mo": 100,  # 최근 100일 이내 (다음 분기 초중순)
+}
+
+
+@app.get("/data-sufficiency/{ticker}", response_model=schemas.DataSufficiencyResponse)
+async def get_data_sufficiency(
+    ticker: str,
+    timeframe: str = Query(...),  # 명시적으로 Query param으로 선언
+    db: AsyncSession = Depends(get_db),
+):
+    symbol = await crud.get_symbol_by_ticker(db, ticker)
+    if not symbol:
+        raise HTTPException(status_code=404, detail=f"Symbol {ticker} not found")
+
+    latest_candle = await crud.get_latest_candle(db, ticker, timeframe)
+    candle_count = await crud.get_candle_count(db, ticker, timeframe)
+
+    sufficient = True
+    message = f"{ticker} ({timeframe}) 데이터는 충분합니다."
+    details_list = []  # 상세 메시지 리스트
+    last_entry_date_val = None
+
+    if not latest_candle:
+        sufficient = False
+        message = f"{ticker} ({timeframe}) 에 대한 최근 캔들 데이터가 없습니다."
+        details_list.append("최근 캔들 데이터가 존재하지 않습니다.")
+    else:
+        last_entry_date_val = latest_candle.ts
+        now_utc = datetime.now(timezone.utc)
+
+        latest_candle_ts_utc = last_entry_date_val
+        if latest_candle_ts_utc.tzinfo is None:
+            latest_candle_ts_utc = latest_candle_ts_utc.replace(tzinfo=timezone.utc)
+        else:
+            latest_candle_ts_utc = latest_candle_ts_utc.astimezone(timezone.utc)
+
+        days_diff = (now_utc.date() - latest_candle_ts_utc.date()).days
+
+        # 타임프레임에 따른 최근 데이터 최대 허용 일수 가져오기
+        max_days_allowed = TIMEFRAME_MAX_DAYS_DIFFERENCE.get(
+            timeframe, MAX_DAYS_DIFFERENCE_FOR_LATEST_CANDLE
+        )
+
+        if days_diff > max_days_allowed:
+            sufficient = False
+            message = f"{ticker} ({timeframe}) 최근 캔들 데이터가 너무 오래되었습니다 (마지막: {latest_candle_ts_utc.strftime('%Y-%m-%d')})."
+            details_list.append(
+                f"데이터가 {days_diff}일 전의 것입니다 (기준: {max_days_allowed}일 이내)."
+            )
+
+    # 타임프레임에 따른 최소 필요 캔들 수 가져오기
+    min_candles_needed = TIMEFRAME_MIN_CANDLES.get(timeframe, MIN_CANDLE_COUNT_FOR_SUFFICIENCY)
+
+    if candle_count < min_candles_needed:
+        sufficient = False
+        current_msg_is_default = message == f"{ticker} ({timeframe}) 데이터는 충분합니다."
+
+        insufficient_count_msg = (
+            f"캔들 데이터 개수가 부족합니다 ({candle_count}개 / 필요: {min_candles_needed}개)."
+        )
+        details_list.append(f"캔들 개수: {candle_count} (필요: {min_candles_needed})")
+
+        if current_msg_is_default:
+            message = f"{ticker} ({timeframe}) {insufficient_count_msg}"
+        else:
+            message += f" 또한, {insufficient_count_msg}"
+
+    if not sufficient and not details_list:
+        details_list.append("데이터가 부족하여 일부 기능이 제한될 수 있습니다.")
+
+    final_details_str = ", ".join(details_list) if details_list else None
+    if sufficient:  # 충분할 경우 details는 null로
+        final_details_str = None
+        message = f"{ticker} ({timeframe}) 데이터는 충분합니다."
+
+    return schemas.DataSufficiencyResponse(
+        sufficient=sufficient,
+        message=message,
+        last_entry_date=last_entry_date_val,
+        details=final_details_str,
+        candle_count=candle_count,
+    )
 
 
 @app.get("/fill-data/status/{ticker}", response_model=schemas.DataStatusResponse)
