@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS indicators (
     ultosc NUMERIC(10,4),
     roc NUMERIC(10,4),
     bull_bear NUMERIC(14,4),
+    willr14 NUMERIC(10,4),
     calc_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(symbol_id, timeframe, ts)
 );
