@@ -36,7 +36,7 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow(),
+        "timestamp": datetime.now(timezone.utc),
         "database": "connected",
     }
 
@@ -410,10 +410,13 @@ async def get_data_sufficiency(
         last_entry_date_val = latest_candle.ts
         now_utc = datetime.now(timezone.utc)
 
+        # timezone-aware datetime 처리 개선
         latest_candle_ts_utc = last_entry_date_val
         if latest_candle_ts_utc.tzinfo is None:
+            # timezone 정보가 없으면 UTC로 가정
             latest_candle_ts_utc = latest_candle_ts_utc.replace(tzinfo=timezone.utc)
         else:
+            # timezone 정보가 있으면 UTC로 변환
             latest_candle_ts_utc = latest_candle_ts_utc.astimezone(timezone.utc)
 
         days_diff = (now_utc.date() - latest_candle_ts_utc.date()).days

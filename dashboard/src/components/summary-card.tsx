@@ -1,9 +1,11 @@
 "use client";
 
+import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
+import { ko } from "date-fns/locale";
 
 interface Summary {
   ticker: string;
@@ -160,13 +162,17 @@ export function SummaryCard({ timeframe, summary }: SummaryCardProps) {
         </div>
 
         {/* 업데이트 시간 */}
-        <div className="text-xs text-muted-foreground text-center pt-2 border-t">
-          업데이트:{" "}
+        <div className="text-xs text-muted-foreground mt-1">
+          마지막 업데이트:{" "}
           {format(
+            // UTC 시간을 한국시간으로 변환하여 표시
             new Date(
-              new Date(summary.scored_at).getTime() + 9 * 60 * 60 * 1000
+              new Date(summary.scored_at).toLocaleString("en-US", {
+                timeZone: "Asia/Seoul",
+              })
             ),
-            "MM/dd HH:mm"
+            "MM/dd HH:mm",
+            { locale: ko }
           )}
         </div>
       </CardContent>

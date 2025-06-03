@@ -92,6 +92,7 @@ async def fill_historical_data(ticker: str, timeframes: List[str] = None, period
 def fetch_yahoo_data(ticker: str, timeframe: str, period: str = "max") -> Optional[pd.DataFrame]:
     """
     Yahoo Finance에서 데이터 가져오기
+    시간대 처리: 거래소별 현지 시간으로 받아서 UTC로 변환하여 DB에 저장
     """
     try:
         # 타임프레임별 interval 매핑
@@ -138,28 +139,27 @@ def fetch_yahoo_data(ticker: str, timeframe: str, period: str = "max") -> Option
             logger.warning(f"No data returned for {ticker}")
             return None
 
-        # 타임존 처리: 모든 데이터를 UTC로 통일
-        logger.info(f"Before timezone processing - Index timezone: {df.index.tz}")
+        # 시간대 처리: Yahoo Finance는 거래소별 현지 시간으로 제공
+        # 모든 데이터를 UTC로 통일하여 DB에 저장
+        logger.info(f"Processing timezone for {ticker} - Original timezone: {df.index.tz}")
         logger.info(f"Index sample: {df.index[:3].tolist() if len(df.index) > 0 else 'Empty'}")
 
         try:
-            # timezone-aware 여부를 확실하게 체크
-            has_tz = hasattr(df.index, "tz") and df.index.tz is not None
-            logger.info(f"Has timezone: {has_tz}")
-
-            if has_tz:
-                # 이미 timezone 정보가 있으면 UTC로 변환만
+            # Yahoo Finance 데이터의 시간대 처리
+            if df.index.tz is not None:
+                # 이미 timezone 정보가 있으면 UTC로 변환
                 logger.info(f"Converting from {df.index.tz} to UTC")
                 df.index = df.index.tz_convert("UTC")
             else:
-                # timezone 정보가 없는 경우
+                # timezone 정보가 없는 경우 거래소별로 추정
                 if ticker.endswith(".KS"):
-                    # 한국 주식은 KST로 가정하고 UTC로 변환
-                    logger.info("Localizing to Asia/Seoul then converting to UTC")
+                    # 한국 주식: KST(Asia/Seoul)로 가정하고 UTC로 변환
+                    logger.info("Korean stock: Localizing to Asia/Seoul then converting to UTC")
                     df.index = df.index.tz_localize("Asia/Seoul").tz_convert("UTC")
                 else:
-                    # 다른 주식들은 UTC로 가정
-                    logger.info("Localizing to UTC")
+                    # 기타 주식: NYSE/NASDAQ 등은 대부분 EST/EDT로 가정
+                    # 하지만 실제로는 Yahoo Finance가 이미 적절한 시간대로 제공하므로 UTC로 가정
+                    logger.info("Non-Korean stock: Localizing to UTC")
                     df.index = df.index.tz_localize("UTC")
 
             logger.info(f"After timezone processing - Index timezone: {df.index.tz}")
@@ -168,12 +168,10 @@ def fetch_yahoo_data(ticker: str, timeframe: str, period: str = "max") -> Option
             logger.error(f"Timezone conversion error for {ticker}: {tz_error}")
             logger.error(f"Error type: {type(tz_error)}")
             import traceback
-
             logger.error(f"Traceback: {traceback.format_exc()}")
 
-            # 에러 발생 시 다른 방법 시도
+            # 에러 발생 시 fallback: timezone 정보 제거하고 UTC로 설정
             try:
-                # 모든 timezone 정보 제거하고 UTC로 다시 설정
                 if hasattr(df.index, "tz_localize"):
                     df.index = df.index.tz_localize(None).tz_localize("UTC")
                     logger.info("Fallback: Removed timezone and re-localized to UTC")
@@ -182,14 +180,13 @@ def fetch_yahoo_data(ticker: str, timeframe: str, period: str = "max") -> Option
                     logger.info("Fallback: Converted to UTC using pd.to_datetime")
             except Exception as fallback_error:
                 logger.error(f"Fallback also failed: {fallback_error}")
-                # 최후의 수단: timezone 정보 없이 진행
                 logger.warning("Proceeding without timezone conversion")
+
         df.columns = df.columns.str.lower()
         df = df.reset_index()
 
         # 디버깅: 실제 컬럼명 확인
         logger.info(f"DataFrame columns after reset_index: {list(df.columns)}")
-        logger.info(f"DataFrame index name: {df.index.name}")
 
         # 인덱스 컬럼명이 다를 수 있으므로 확인 후 변경
         if "date" in df.columns:
@@ -206,26 +203,23 @@ def fetch_yahoo_data(ticker: str, timeframe: str, period: str = "max") -> Option
             )
             df.rename(columns={first_col: "ts"}, inplace=True)
 
-        # 한국 주식의 경우 정규장 시간만 필터링
+        # 한국 주식의 경우 정규장 시간만 필터링 (5분, 1시간봉만)
         if ticker.endswith(".KS") and timeframe in ["5m", "1h"]:
-            logger.info(f"Filtering regular trading hours for {ticker}")
+            logger.info(f"Filtering regular trading hours for Korean stock {ticker}")
 
             # ts 컬럼이 이미 UTC 시간이므로 KST로 변환해서 필터링
             ts_series = pd.to_datetime(df["ts"])
-            logger.info(f"ts_series timezone: {ts_series.dt.tz}")
-
-            # timezone 정보가 있는지 확인하고 처리
+            
+            # UTC에서 KST(+9시간)로 변환
             if ts_series.dt.tz is not None:
-                # 이미 timezone이 있으면 KST로 변환
                 df_ts_kst = ts_series.dt.tz_convert("Asia/Seoul")
             else:
-                # timezone이 없으면 UTC로 가정하고 KST로 변환
                 df_ts_kst = ts_series.dt.tz_localize("UTC").dt.tz_convert("Asia/Seoul")
 
             df["hour"] = df_ts_kst.dt.hour
             df["minute"] = df_ts_kst.dt.minute
 
-            # 정규장 시간: 09:00 ~ 15:30 (15:30 포함)
+            # 한국 정규장 시간: 09:00 ~ 15:30 (15:30 포함)
             regular_hours = (
                 ((df["hour"] == 9) & (df["minute"] >= 0))
                 | ((df["hour"] >= 10) & (df["hour"] <= 14))
@@ -279,7 +273,7 @@ async def save_candle_data(
                 float(row["low"]),
                 float(row["close"]),
                 float(row["volume"]),
-                datetime.now(timezone.utc),
+                datetime.now(timezone.utc),  # ingested_at은 현재 UTC 시간
             )
         )
 
@@ -424,7 +418,7 @@ async def calculate_and_save_indicators(
                 safe_float(row.get("ultosc")),
                 safe_float(row.get("roc")),
                 safe_float(row.get("bull_bear")),
-                datetime.now(timezone.utc),
+                datetime.now(timezone.utc),  # calc_at은 현재 UTC 시간
             )
         )
 
@@ -497,7 +491,7 @@ async def calculate_and_save_moving_averages(
                 safe_float(row.get("ma50")),
                 safe_float(row.get("ma100")),
                 safe_float(row.get("ma200")),
-                datetime.now(timezone.utc),
+                datetime.now(timezone.utc),  # calc_at은 현재 UTC 시간
             )
         )
 
@@ -570,7 +564,7 @@ async def calculate_and_save_summary(
                 sell_cnt,
                 neutral_cnt,
                 level,
-                datetime.now(timezone.utc),
+                datetime.now(timezone.utc),  # scored_at은 현재 UTC 시간
             )
         )
 
