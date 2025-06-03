@@ -12,7 +12,7 @@ x-airflow-common:
     AIRFLOW__CORE__FERNET_KEY: 46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     _AIRFLOW_WWW_USER_USERNAME: airflow
     _AIRFLOW_WWW_USER_PASSWORD: airflow
@@ -86,30 +86,35 @@ services:
     command:
       - -c
       - |
+        # 디렉토리 생성 및 권한 설정
         mkdir -p /sources/logs /sources/dags /sources/plugins
         chown -R "${AIRFLOW_UID:-50000}:0" /sources/{logs,dags,plugins}
         
-        # DB 초기화 상태 확인
-        if ! airflow db check >/dev/null 2>&1; then
-          echo "Initializing Airflow DB..."
-          exec /entrypoint airflow db init
-        else
-          echo "Airflow DB already initialized, skipping..."
-        fi
+        # PostgreSQL이 완전히 준비될 때까지 대기
+        echo "Waiting for PostgreSQL to be ready..."
+        until pg_isready -h postgres -p 5432 -U chartbeacon; do
+          echo "PostgreSQL is unavailable - sleeping"
+          sleep 2
+        done
+        echo "PostgreSQL is ready!"
         
-        # 사용자 존재 확인
-        if ! airflow users list | grep -q "$${_AIRFLOW_WWW_USER_USERNAME}"; then
-          echo "Creating admin user..."
-          airflow users create \
-            --username $${_AIRFLOW_WWW_USER_USERNAME} \
-            --firstname Airflow \
-            --lastname Admin \
-            --role Admin \
-            --email admin@example.com \
-            --password $${_AIRFLOW_WWW_USER_PASSWORD}
-        else
-          echo "Admin user already exists, skipping..."
-        fi
+        # DB 초기화 (항상 실행하여 마이그레이션 포함)
+        echo "Initializing/upgrading Airflow DB..."
+        airflow db init
+        
+        # 관리자 사용자 생성
+        echo "Creating admin user..."
+        airflow users create \
+          --username $${_AIRFLOW_WWW_USER_USERNAME} \
+          --firstname Airflow \
+          --lastname Admin \
+          --role Admin \
+          --email admin@example.com \
+          --password $${_AIRFLOW_WWW_USER_PASSWORD} \
+          --use-random-password false \
+          || echo "User already exists or creation failed, continuing..."
+        
+        echo "Airflow initialization completed!"
     environment:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: 'true'
