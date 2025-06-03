@@ -7,6 +7,11 @@ FROM node:18-alpine AS builder
 WORKDIR /app
 COPY dashboard/ ./
 COPY --from=deps /app/node_modules ./node_modules
+
+# 빌드 시점에 API 포트를 받아옴
+ARG API_PORT=8000
+ENV NEXT_PUBLIC_API_URL=http://localhost:${API_PORT}
+
 RUN npm run build
 
 FROM node:18-alpine AS runner
