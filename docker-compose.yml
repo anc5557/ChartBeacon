@@ -12,7 +12,7 @@ x-airflow-common:
     AIRFLOW__CORE__FERNET_KEY: 46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     _AIRFLOW_WWW_USER_USERNAME: airflow
     _AIRFLOW_WWW_USER_PASSWORD: airflow
@@ -100,7 +100,7 @@ services:
         
         # DB 초기화 (항상 실행하여 마이그레이션 포함)
         echo "Initializing/upgrading Airflow DB..."
-        airflow db init
+        airflow db migrate
         
         # 관리자 사용자 생성
         echo "Creating admin user..."
@@ -111,7 +111,6 @@ services:
           --role Admin \
           --email admin@example.com \
           --password $${_AIRFLOW_WWW_USER_PASSWORD} \
-          --use-random-password false \
           || echo "User already exists or creation failed, continuing..."
         
         echo "Airflow initialization completed!"
