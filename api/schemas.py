@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, field_validator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
 import math
@@ -22,7 +22,7 @@ class SymbolUpdate(BaseModel):
 class Symbol(SymbolBase):
     id: int
     active: bool
-    created_at: datetime
+    created_at: datetime  # DB에서 timezone-aware datetime으로 받아옴
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -55,13 +55,13 @@ class CandleBase(BaseModel):
 
 
 class Candle(CandleBase):
-    ts: datetime
+    ts: datetime  # DB에서 timezone-aware datetime으로 받아옴 (UTC)
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class IndicatorResponse(BaseModel):
-    ts: datetime
+    ts: datetime  # DB에서 timezone-aware datetime으로 받아옴 (UTC)
     rsi14: Optional[Decimal]
     stoch_k: Optional[Decimal]
     stoch_d: Optional[Decimal]
@@ -80,7 +80,7 @@ class IndicatorResponse(BaseModel):
 
 
 class MovingAvgResponse(BaseModel):
-    ts: datetime
+    ts: datetime  # DB에서 timezone-aware datetime으로 받아옴 (UTC)
     ma5: Optional[Decimal]
     ema5: Optional[Decimal]
     ma10: Optional[Decimal]
@@ -97,19 +97,19 @@ class MovingAvgResponse(BaseModel):
 class SummaryResponse(BaseModel):
     ticker: str
     timeframe: str
-    ts: datetime
+    ts: datetime  # DB에서 timezone-aware datetime으로 받아옴 (UTC)
     buy_cnt: int
     sell_cnt: int
     neutral_cnt: int
     level: str
-    scored_at: datetime
+    scored_at: datetime  # DB에서 timezone-aware datetime으로 받아옴 (UTC)
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class HealthResponse(BaseModel):
     status: str
-    timestamp: datetime
+    timestamp: datetime  # 현재 UTC 시간
     database: str
 
 

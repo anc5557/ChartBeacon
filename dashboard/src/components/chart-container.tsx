@@ -178,9 +178,12 @@ export function ChartContainer({
 
   // 차트 데이터 변환 (UTC → KST)
   const chartData = candles.map((candle) => {
+    // UTC 시간을 한국시간으로 변환
     const utcDate = new Date(candle.ts);
-    // UTC → KST (+9시간)
-    const kstDate = new Date(utcDate.getTime() + 9 * 60 * 60 * 1000);
+    const kstDateString = utcDate.toLocaleString("en-US", {
+      timeZone: "Asia/Seoul",
+    });
+    const kstDate = new Date(kstDateString);
     const formattedTime = format(kstDate, getTimeFormat(timeframe));
 
     // 해당 시점의 summary 찾기
