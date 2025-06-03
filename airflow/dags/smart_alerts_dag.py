@@ -344,7 +344,12 @@ def check_price_alert_for_symbol(ticker: str, pg_hook: PostgresHook):
             f"PRICE ALERT for {ticker}: {alert_trigger} ({price_change_percent:+.2f}%) Price: {latest_close}, Prev: {previous_close}"
         )
 
-        candle_time_str = pendulum.instance(latest_candle_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
+        # latest_candle_ts is an aware datetime object (likely UTC from DB)
+        alert_time_kst_str = (
+            pendulum.instance(latest_candle_ts)
+            .in_timezone("Asia/Seoul")
+            .strftime("%Y-%m-%d %H:%M:%S KST")
+        )
 
         explanation = ""
         action_suggestion = ""
@@ -369,7 +374,7 @@ def check_price_alert_for_symbol(ticker: str, pg_hook: PostgresHook):
                             "value": f"{price_change_percent:+.2f}%",
                             "inline": True,
                         },
-                        {"name": "기준 시간 (5분봉)", "value": candle_time_str, "inline": False},
+                        {"name": "기준 시간 (5분봉)", "value": alert_time_kst_str, "inline": False},
                         {
                             "name": f"📊 {LONG_TIMEFRAME.upper()} 컨텍스트",
                             "value": context_analysis.get("message", "분석 정보 없음"),
@@ -477,7 +482,12 @@ def check_volume_alert_for_symbol(ticker: str, pg_hook: PostgresHook):
         action_suggestion = (
             "거래량 증가 방향으로의 추세 지속 또는 반전 가능성 염두. 가격 움직임과 함께 판단."
         )
-        candle_time_str = pendulum.instance(latest_candle_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
+        # latest_candle_ts is an aware datetime object
+        candle_time_kst_str = (
+            pendulum.instance(latest_candle_ts)
+            .in_timezone("Asia/Seoul")
+            .strftime("%Y-%m-%d %H:%M:%S KST")
+        )
 
         payload = {
             "username": "ChartBeacon Volume Alert",
@@ -493,7 +503,11 @@ def check_volume_alert_for_symbol(ticker: str, pg_hook: PostgresHook):
                             "value": f"{avg_volume:,.0f}",
                             "inline": True,
                         },
-                        {"name": "기준 시간 (5분봉)", "value": candle_time_str, "inline": False},
+                        {
+                            "name": "기준 시간 (5분봉)",
+                            "value": candle_time_kst_str,
+                            "inline": False,
+                        },
                         {
                             "name": f"📊 {LONG_TIMEFRAME.upper()} 컨텍스트",
                             "value": context_analysis.get("message", "분석 정보 없음"),
@@ -611,7 +625,10 @@ def check_bollinger_band_alert_for_symbol(ticker: str, pg_hook: PostgresHook):
             f"BBANDS ALERT for {ticker}: {alert_type}. Price: {latest_close:.2f}, Upper: {upper_band:.2f}, Lower: {lower_band:.2f}"
         )
 
-        candle_time_str = pendulum.instance(latest_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
+        # latest_ts is an aware datetime object
+        alert_time_kst_str = (
+            pendulum.instance(latest_ts).in_timezone("Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S KST")
+        )
 
         explanation = ""
         action_suggestion = ""
@@ -634,7 +651,7 @@ def check_bollinger_band_alert_for_symbol(ticker: str, pg_hook: PostgresHook):
                         {"name": "상단밴드", "value": f"{upper_band:,.2f}", "inline": True},
                         {"name": "하단밴드", "value": f"{lower_band:,.2f}", "inline": True},
                         {"name": "중심선(SMA)", "value": f"{sma:,.2f}", "inline": True},
-                        {"name": "기준 시간 (5분봉)", "value": candle_time_str, "inline": False},
+                        {"name": "기준 시간 (5분봉)", "value": alert_time_kst_str, "inline": False},
                         {
                             "name": f"📊 {LONG_TIMEFRAME.upper()} 컨텍스트",
                             "value": context_analysis.get("message", "분석 정보 없음"),
@@ -742,7 +759,10 @@ def check_support_resistance_alert_for_symbol(ticker: str, pg_hook: PostgresHook
             f"S/R ALERT for {ticker}: {alert_type}. Low: {latest_low:.2f}, High: {latest_high:.2f}, Support: {dynamic_support:.2f}, Resistance: {dynamic_resistance:.2f}"
         )
 
-        candle_time_str = pendulum.instance(latest_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
+        # latest_ts is an aware datetime object
+        alert_time_kst_str = (
+            pendulum.instance(latest_ts).in_timezone("Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S KST")
+        )
 
         explanation = ""
         action_suggestion = ""
@@ -769,7 +789,7 @@ def check_support_resistance_alert_for_symbol(ticker: str, pg_hook: PostgresHook
                         {"name": "현재 고가", "value": f"{latest_high:,.2f}", "inline": True},
                         {"name": "현재 종가", "value": f"{latest_close:,.2f}", "inline": True},
                         {"name": "감지된 레벨", "value": level_touched, "inline": True},
-                        {"name": "기준 시간 (5분봉)", "value": candle_time_str, "inline": False},
+                        {"name": "기준 시간 (5분봉)", "value": alert_time_kst_str, "inline": False},
                         {
                             "name": f"📊 {LONG_TIMEFRAME.upper()} 컨텍스트",
                             "value": context_analysis.get("message", "분석 정보 없음"),

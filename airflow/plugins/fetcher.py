@@ -148,8 +148,14 @@ class DataFetcher:
                 logger.warning(f"No data fetched for {ticker} {timeframe}")
                 return pd.DataFrame()
 
-            # 타임존 처리
-            df.index = pd.to_datetime(df.index).tz_localize(None)
+            # 타임존 처리: yfinance가 반환하는 aware DatetimeIndex를 그대로 사용
+            # 다음 라인들은 제거 또는 주석 처리:
+            # if df.index.tz is not None:
+            #     df.index = df.index.tz_convert("UTC")
+            # df.index = pd.to_datetime(df.index).tz_localize(None)
+
+            # pd.to_datetime을 호출하여 DatetimeIndex 타입을 확실히 하고, yfinance가 반환한 원본 시간대 유지
+            df.index = pd.to_datetime(df.index)
 
             # 컬럼명 정리
             df = df.rename(

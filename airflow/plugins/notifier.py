@@ -45,9 +45,7 @@ class DiscordNotifier:
             """
             )
 
-            results = conn.execute(
-                query, {"ticker": ticker, "timeframe": timeframe}
-            ).fetchall()
+            results = conn.execute(query, {"ticker": ticker, "timeframe": timeframe}).fetchall()
 
             if len(results) < 1:
                 return None
@@ -88,9 +86,23 @@ class DiscordNotifier:
         return tf_map.get(timeframe, timeframe)
 
     def format_timestamp(self, ts: datetime) -> str:
-        """Format timestamp to KST"""
-        kst = timezone(timedelta(hours=9))
-        ts_kst = ts.replace(tzinfo=timezone.utc).astimezone(kst)
+        """Format an aware datetime object to KST string.
+        Assumes the input 'ts' is an aware datetime object.
+        """
+        # KST 시간대 정의 (UTC+9)
+        # Python 3.9+ 에서는 from zoneinfo import ZoneInfo; kst_tz = ZoneInfo("Asia/Seoul") 사용 권장
+        kst_tz = timezone(timedelta(hours=9), name="KST")
+
+        if ts.tzinfo is None:
+            # 만약 어떤 이유로 naive datetime이 전달되면, UTC로 가정하고 KST로 변환 (이전 로직 유지)
+            # 하지만 fetcher.py 수정으로 인해 DB에서 오는 값은 aware여야 함
+            logger.warning(f"Received naive datetime in format_timestamp: {ts}. Assuming UTC.")
+            aware_ts_utc = ts.replace(tzinfo=timezone.utc)
+            ts_kst = aware_ts_utc.astimezone(kst_tz)
+        else:
+            # Aware datetime 객체를 KST로 변환
+            ts_kst = ts.astimezone(kst_tz)
+
         return ts_kst.strftime("%Y-%m-%d %H:%M:%S KST")
 
     def send_notification(self, change_data: Dict) -> bool:
@@ -141,9 +153,7 @@ class DiscordNotifier:
                 logger.info(f"Discord notification sent for {ticker} {current_level}")
                 return True
             else:
-                logger.error(
-                    f"Discord webhook failed: {response.status_code} {response.text}"
-                )
+                logger.error(f"Discord webhook failed: {response.status_code} {response.text}")
                 return False
 
         except Exception as e:
